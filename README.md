@@ -2,7 +2,7 @@ Invincible Brand
 
 Q1. Set up a basic cloud formation template for a EC2-AutoScalingGroup to accommodate the following requirements:
 
-Ans. I have added asg.yml to the repo. I have use target tracking policy, so I didn't needed some parametes which were metioned in the task. 
+Ans. I have added asg.yml to the repo. I have used target tracking policy, so I didn't need some parameters which were metioned in the task. 
 
 Q2. One of our main challenges is to accommodate huge spikes of traffic, for example - thousands of users online within a couple of minutes. How would you suggest to setup our AutoScalingGroup in order to serve as little 50x errors as possible when scaling aggressively?
 
