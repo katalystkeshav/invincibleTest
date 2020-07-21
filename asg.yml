@@ -1,0 +1,191 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Basic template for AutoScaling group
+
+Parameters:
+  AmiId:
+    Description: Base AMI Id for EC2
+    Type: String
+    Default: ami-0732b62d310b80e97
+  VPC:
+    Description: Select the VPC for EC2 instances
+    Type: 'AWS::EC2::VPC::Id'
+  SubnetIds:
+    Description: Select the subnets for instance
+    Type: 'List<AWS::EC2::Subnet::Id>'
+  SecurityGroupIds:
+    Description: Select the subnets for instance
+    Type: 'List<AWS::EC2::SecurityGroup::Id>'
+  InstanceType:
+    Description: Define the type of the instance
+    Type: String
+    Default: t3.small
+  Zones:
+    Description: Select the AvailabilityZones for Instances
+    Type: 'List<AWS::EC2::AvailabilityZone::Name>'
+    Default: 'ap-south-1a, ap-south-1b, ap-south-1c'
+  InstanceKey:
+    Description: Select the keypair for SnR instance.
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Default: lifestyle-dev1
+  ScalingMin:
+    Description: Minimum size for AutoScaling group
+    Type: String
+    Default: '0'
+  ScalingMax:
+    Description: Mazimum size for AutoScaling group
+    Type: String
+    Default: '0'
+  DesiredCapacity:
+    Description: No of instances required in AutoScaling group
+    Type: String
+    Default: '0'
+  CoolDownTime:
+    Description: Amount of time required before another scaling activity
+    Type: String
+    Default: '200'
+  WarmupTime:
+    Description: The estimated time until a newly launched instance can contribute to the CloudWatch metrics.
+    Type: String
+    Default: '60'
+  LaunchNotificationArn:
+    Description: Arn of the topic which sends instance launch notification
+    Type: String
+  TerminationNotificationArn:
+    Description: Arn of topic which sends termination notification
+    Type: String
+  NotificationRole:
+    Description: Arn of role which is used to send notifications
+    Type: String
+  GracePeriod:
+    Description: Amount of time required before healthcheck can be performed
+    Type: Number
+    Default: 60
+  HealthCheckType:
+    Description: Type of healthcheck which is performed on the instance
+    Type: String
+    Default: 'ELB'
+    AllowedValues: 
+      - 'ELB'
+      - 'EC2'
+  AsgTargetGroups:
+    Description: Arn of traget groups assigned with the AutoScaling group
+    Type: CommaDelimitedList
+  ScalingPolicyTg:
+    Description: Traget group assigned with the AutoScaling group's scaling policy
+    Type: String
+  NFSLocation:
+    Description: Location of efs
+    Type: String
+    Default: 'nfs.example.com:/data'
+  InstanceName:
+    Description: Name assigned to instances in AutoScaling group
+    Type: String
+    Default: 'test'
+  Environment:
+    Description: Name of the Environment
+    Type: String
+    Default: 'dev'
+
+Resources:
+  InstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    DependsOn:
+      - InstanceRole
+    Properties:
+      Path: /
+      Roles:
+        - !Ref InstanceRole
+
+  InstanceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: EC2RoleforTest
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess'
+
+  LauchConfig:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    DependsOn:
+      - InstanceRole
+    Properties:
+      AssociatePublicIpAddress: 'False'
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp2
+            DeleteOnTermination: 'true'
+            VolumeSize: '10'
+      SecurityGroups: !Ref SecurityGroupIds
+      IamInstanceProfile: !Ref InstanceProfile
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref InstanceKey
+      UserData:
+        Fn::Base64: !Sub |
+           #!/bin/bash -xe
+           mkdir -p /data
+           mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport ${NFSLocation} /data
+
+  AutoScaling:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    DependsOn:
+      - LauchConfig
+    Properties:
+      AutoScalingGroupName: !Sub '${AWS::StackName}'
+      AvailabilityZones: !Ref Zones
+      Cooldown: !Ref CoolDownTime
+      DesiredCapacity: !Ref DesiredCapacity
+      HealthCheckGracePeriod: !Ref GracePeriod
+      HealthCheckType: !Ref HealthCheckType
+      LaunchConfigurationName: !Ref LauchConfig
+      LifecycleHookSpecificationList:
+        - LifecycleHookName: LaunchNotification
+          LifecycleTransition: autoscaling:EC2_INSTANCE_LAUNCHING
+          NotificationTargetARN: !Ref LaunchNotificationArn
+          RoleARN: !Ref NotificationRole
+        - LifecycleHookName: TerminationNotification
+          LifecycleTransition: autoscaling:EC2_INSTANCE_LAUNCHING
+          NotificationTargetARN: !Ref TerminationNotificationArn
+          RoleARN: !Ref NotificationRole
+      MaxSize: !Ref ScalingMax
+      MinSize: !Ref ScalingMin
+      TargetGroupARNs: !Ref AsgTargetGroups
+      VPCZoneIdentifier: !Ref SubnetIds
+      Tags:
+        - Key: Name
+          Value: !Ref InstanceName
+          PropagateAtLaunch: 'True'
+        - Key: Environment
+          Value: !Ref Environment
+          PropagateAtLaunch: 'True'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MaxBatchSize: '1'
+        MinInstancesInService: !Ref DesiredCapacity
+  
+  LoadScalingPolicy:
+    Type: 'AWS::AutoScaling::ScalingPolicy'
+    Properties:
+      AutoScalingGroupName: !Ref AutoScaling
+      Cooldown: !Ref CoolDownTime
+      EstimatedInstanceWarmup: !Ref WarmupTime
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ALBRequestCountPerTarget
+          ResourceLabel: !Ref ScalingPolicyTg
+        TargetValue: '500'
+
+Outputs:
+  AsgName:
+    Description: The autoscaling group
+    Value: !Ref AutoScaling
